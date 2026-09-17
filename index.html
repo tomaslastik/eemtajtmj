@@ -1,0 +1,730 @@
+<!doctype html>
+<html lang="sk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Naše výlety po Európe</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Castoro:ital@0;1&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root{
+  --paper:#FAF6EC; --paper-2:#F1EBDC;
+  --ink:#26333E; --muted:#5F6E7A; --line:#DCD4C1;
+  --accent:#C2402E; --accent-ink:#FFFFFF; --accent-soft:#F2DAD3;
+  --done:#4E7D57;
+  --shadow:0 10px 30px rgba(38,51,62,.18);
+  --serif:'Castoro', Georgia, 'Times New Roman', serif;
+  --sans:'Atkinson Hyperlegible','Segoe UI',system-ui,-apple-system,sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --paper:#1A242D; --paper-2:#212D37;
+    --ink:#EAE5D8; --muted:#97A4AE; --line:#31404B;
+    --accent:#E76A54; --accent-ink:#1C1310; --accent-soft:#47281F;
+    --done:#7FB289;
+    --shadow:0 10px 30px rgba(0,0,0,.5);
+  }
+  .leaflet-tile{ filter:brightness(.7) invert(1) contrast(1.05) hue-rotate(190deg) saturate(.35) brightness(.85); }
+  .leaflet-container{ background:#0D1820; }
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:var(--sans); font-size:15px; line-height:1.5; overflow:hidden;
+}
+button{font-family:var(--sans); font-size:14px; cursor:pointer}
+button:focus-visible, input:focus-visible, textarea:focus-visible{
+  outline:2px solid var(--accent); outline-offset:2px; border-radius:4px;
+}
+img{max-width:100%}
+
+#mapEl{position:fixed; inset:0; z-index:1}
+body.add-mode .leaflet-container{cursor:crosshair}
+.leaflet-div-icon{background:none; border:none}
+.flag-pin{filter:drop-shadow(0 1px 1px rgba(0,0,0,.35))}
+
+/* kartuša */
+.cartouche{
+  position:fixed; top:14px; left:14px; z-index:1000;
+  background:var(--paper); border:1px solid var(--ink);
+  box-shadow:var(--shadow); padding:12px 16px 10px;
+  max-width:min(320px, calc(100vw - 28px));
+}
+.cartouche::after{content:""; position:absolute; inset:3px; pointer-events:none; border:1px solid var(--line)}
+.cartouche h1{font-family:var(--serif); font-style:italic; font-weight:400; font-size:26px; line-height:1.1; margin:0}
+.cartouche p{margin:2px 0 0; color:var(--muted); font-size:13px}
+
+/* horné akcie */
+.actions{
+  position:fixed; top:14px; right:14px; z-index:1000;
+  display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;
+}
+.btn{
+  border:1px solid var(--ink); background:var(--paper); color:var(--ink);
+  padding:9px 14px; border-radius:999px; box-shadow:var(--shadow);
+}
+.btn:hover{background:var(--paper-2)}
+.btn.primary{background:var(--accent); border-color:var(--accent); color:var(--accent-ink); font-weight:700}
+.btn.primary:hover{filter:brightness(1.06)}
+.btn:disabled{opacity:.5; cursor:not-allowed}
+.userchip{
+  display:flex; align-items:center; gap:8px; background:var(--paper); border:1px solid var(--line);
+  border-radius:999px; padding:5px 12px 5px 6px; box-shadow:var(--shadow); font-size:13px;
+}
+.userchip button{background:none; border:none; color:var(--muted); padding:0 2px; font-size:13px; text-decoration:underline}
+.userchip button:hover{color:var(--ink)}
+
+/* hint */
+.hint{
+  position:fixed; top:70px; left:50%; transform:translateX(-50%); z-index:1000;
+  background:var(--ink); color:var(--paper); padding:10px 14px; border-radius:999px;
+  display:none; align-items:center; gap:12px; box-shadow:var(--shadow); max-width:calc(100vw - 28px);
+}
+body.add-mode .hint{display:flex}
+.hint button{background:transparent; border:1px solid var(--paper); color:var(--paper); border-radius:999px; padding:4px 10px}
+
+/* panel */
+.panel{
+  position:fixed; left:14px; top:96px; z-index:900;
+  width:300px; max-width:calc(100vw - 28px);
+  background:var(--paper); border:1px solid var(--line); border-radius:12px;
+  box-shadow:var(--shadow); overflow:hidden; display:flex; flex-direction:column;
+  max-height:calc(100vh - 120px);
+}
+.panel header{
+  display:flex; align-items:center; justify-content:space-between;
+  padding:10px 12px; border-bottom:1px solid var(--line); background:var(--paper-2);
+}
+.panel header h2{font-family:var(--serif); font-weight:400; font-size:17px; margin:0}
+.panel header button{background:none; border:none; color:var(--muted); font-size:16px; padding:2px 6px}
+.panel .rows{overflow:auto; overscroll-behavior:contain}
+.panel.collapsed .rows{display:none}
+.row{
+  display:flex; gap:10px; align-items:flex-start; width:100%; text-align:left;
+  background:none; border:none; border-bottom:1px solid var(--line);
+  padding:10px 12px; color:var(--ink);
+}
+.row:last-child{border-bottom:none}
+.row:hover{background:var(--paper-2)}
+.row .flag-ico{flex:none; margin-top:2px}
+.row .t{font-family:var(--serif); font-size:16px; line-height:1.25}
+.row .m{color:var(--muted); font-size:12.5px; margin-top:1px}
+.row.done .t{color:var(--muted); text-decoration:line-through}
+.empty{padding:16px 14px; color:var(--muted); font-size:13.5px}
+
+/* šuplík */
+.drawer{
+  position:fixed; top:0; right:0; bottom:0; z-index:1100;
+  width:400px; max-width:100vw;
+  background:var(--paper); border-left:1px solid var(--line); box-shadow:var(--shadow);
+  transform:translateX(105%); transition:transform .22s ease;
+  display:flex; flex-direction:column;
+}
+.drawer.open{transform:translateX(0)}
+.drawer .head{display:flex; align-items:flex-start; gap:10px; padding:16px 16px 10px; border-bottom:1px solid var(--line)}
+.drawer .head h2{font-family:var(--serif); font-weight:400; font-size:22px; line-height:1.2; margin:0; flex:1}
+.iconbtn{background:none; border:1px solid var(--line); border-radius:8px; width:32px; height:32px; color:var(--muted); font-size:15px; flex:none}
+.iconbtn:hover{color:var(--ink); border-color:var(--ink)}
+.drawer .body{padding:14px 16px 24px; overflow:auto; overscroll-behavior:contain; flex:1}
+
+.meta{display:flex; align-items:center; gap:8px; margin-bottom:12px}
+.avatar{
+  width:26px; height:26px; border-radius:50%; flex:none; display:inline-flex;
+  align-items:center; justify-content:center; color:#fff; font-size:12px; font-weight:700;
+}
+.meta .who{font-weight:700; font-size:13.5px}
+.meta .when{color:var(--muted); font-size:12.5px}
+.desc{white-space:pre-wrap; margin:0 0 14px}
+.gallery{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:14px}
+.gallery img{width:100%; aspect-ratio:4/3; object-fit:cover; border-radius:8px; border:1px solid var(--line); cursor:zoom-in; background:var(--paper-2)}
+.donebox{display:flex; align-items:center; gap:8px; margin:4px 0 16px; font-size:14px}
+.donebox input{width:17px; height:17px; accent-color:var(--done)}
+.section-title{font-family:var(--serif); font-size:17px; margin:14px 0 8px; padding-top:12px; border-top:1px solid var(--line)}
+.comment{display:flex; gap:8px; margin-bottom:10px}
+.comment .bubble{background:var(--paper-2); border-radius:10px; padding:7px 10px; flex:1; min-width:0}
+.comment .who{font-weight:700; font-size:12.5px}
+.comment .when{color:var(--muted); font-weight:400; font-size:11.5px; margin-left:6px}
+.comment p{margin:2px 0 0; font-size:14px; white-space:pre-wrap; overflow-wrap:break-word}
+.composer{display:flex; gap:8px; margin-top:10px}
+.composer textarea{flex:1; resize:none; min-height:38px}
+.tools{display:flex; gap:8px; margin-top:18px; padding-top:14px; border-top:1px solid var(--line)}
+.btn.quiet{box-shadow:none; border-color:var(--line); color:var(--muted)}
+.btn.quiet:hover{color:var(--ink); border-color:var(--ink)}
+.btn.danger{box-shadow:none; border-color:var(--line); color:var(--accent); background:none}
+.btn.danger:hover{border-color:var(--accent); background:var(--accent-soft)}
+
+/* formulár */
+label{display:block; font-weight:700; font-size:13px; margin:12px 0 4px}
+input[type=text], input[type=email], input[type=password], textarea{
+  width:100%; border:1px solid var(--line); border-radius:8px;
+  background:var(--paper-2); color:var(--ink); padding:9px 10px;
+  font-family:var(--sans); font-size:14.5px;
+}
+textarea{min-height:96px; resize:vertical}
+.photo-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:8px}
+.photo-grid .ph{position:relative}
+.photo-grid img{width:100%; aspect-ratio:1; object-fit:cover; border-radius:8px; border:1px solid var(--line); background:var(--paper-2)}
+.photo-grid .rm{
+  position:absolute; top:-6px; right:-6px; width:22px; height:22px; border-radius:50%;
+  border:1px solid var(--ink); background:var(--paper); color:var(--ink); font-size:12px; line-height:1;
+}
+.addph{border:1px dashed var(--muted); background:none; border-radius:8px; aspect-ratio:1; color:var(--muted); font-size:13px}
+.addph:hover{color:var(--ink); border-color:var(--ink)}
+.form-actions{display:flex; gap:8px; margin-top:18px}
+.note{color:var(--muted); font-size:12.5px; margin-top:6px}
+
+/* lightbox */
+.lightbox{
+  position:fixed; inset:0; z-index:2000; background:rgba(10,14,18,.88);
+  display:none; align-items:center; justify-content:center; padding:24px;
+}
+.lightbox.open{display:flex}
+.lightbox img{max-width:min(1100px,94vw); max-height:90vh; border-radius:8px}
+.lightbox .close{position:absolute; top:14px; right:14px; width:38px; height:38px; border-radius:50%; border:1px solid #fff; background:transparent; color:#fff; font-size:17px}
+
+/* toast */
+.toast{
+  position:fixed; bottom:18px; left:50%; transform:translateX(-50%); z-index:2100;
+  background:var(--ink); color:var(--paper); padding:10px 16px; border-radius:999px;
+  box-shadow:var(--shadow); display:none; max-width:calc(100vw - 28px); text-align:center;
+}
+.toast.show{display:block}
+
+/* prihlásenie */
+.auth{
+  position:fixed; inset:0; z-index:1500; background:var(--paper);
+  display:none; align-items:center; justify-content:center; padding:20px;
+}
+.auth.open{display:flex}
+.auth .card{
+  width:360px; max-width:100%; background:var(--paper); border:1px solid var(--ink);
+  box-shadow:var(--shadow); padding:22px 22px 20px; position:relative;
+}
+.auth .card::after{content:""; position:absolute; inset:4px; pointer-events:none; border:1px solid var(--line)}
+.auth h1{font-family:var(--serif); font-style:italic; font-weight:400; font-size:30px; margin:0}
+.auth .sub{color:var(--muted); font-size:13.5px; margin:2px 0 8px}
+.auth .btn{width:100%; margin-top:16px}
+.auth .err{color:var(--accent); font-size:13px; margin-top:10px; min-height:1em}
+.auth .foot{color:var(--muted); font-size:12px; margin-top:12px}
+
+@media (max-width:720px){
+  .cartouche h1{font-size:21px}
+  .cartouche p{display:none}
+  .panel{top:auto; bottom:0; left:0; width:100vw; max-width:100vw; border-radius:14px 14px 0 0; max-height:46vh}
+  .drawer{width:100vw}
+}
+</style>
+</head>
+<body>
+
+<div id="mapEl" aria-label="Mapa Európy s vlajočkami výletov"></div>
+
+<div class="cartouche">
+  <h1>Naše výlety</h1>
+  <p>nápady na potulky Európou</p>
+</div>
+
+<div class="actions">
+  <span class="userchip" id="userChip" hidden><span class="avatar" id="myAvatar"></span><span id="myName"></span><button id="logoutBtn">odhlásiť</button></span>
+  <button class="btn primary" id="addBtn" hidden>⚑ Pridať výlet</button>
+</div>
+
+<div class="hint" role="status">
+  <span>Klikni na mapu tam, kam sa chceš vybrať</span>
+  <button id="cancelAdd">Zrušiť</button>
+</div>
+
+<aside class="panel" id="panel" hidden>
+  <header>
+    <h2 id="panelTitle">Nápady</h2>
+    <button id="panelToggle" aria-label="Zbaliť alebo rozbaliť zoznam">▾</button>
+  </header>
+  <div class="rows" id="rows"></div>
+</aside>
+
+<aside class="drawer" id="drawer" aria-live="polite">
+  <div class="head">
+    <h2 id="drawerTitle"></h2>
+    <button class="iconbtn" id="drawerClose" aria-label="Zavrieť">✕</button>
+  </div>
+  <div class="body" id="drawerBody"></div>
+</aside>
+
+<div class="lightbox" id="lightbox">
+  <button class="close" aria-label="Zavrieť">✕</button>
+  <img id="lightboxImg" alt="Fotka z výletu">
+</div>
+
+<div class="toast" id="toast" role="status"></div>
+
+<div class="auth" id="auth">
+  <div class="card">
+    <h1>Naše výlety</h1>
+    <p class="sub">nápady na potulky Európou</p>
+    <label for="aEmail">E-mail</label>
+    <input type="email" id="aEmail" autocomplete="username">
+    <label for="aPass">Heslo</label>
+    <input type="password" id="aPass" autocomplete="current-password">
+    <button class="btn primary" id="aLogin">Prihlásiť sa</button>
+    <p class="err" id="aErr"></p>
+    <p class="foot">Účty vytvára správca mapy — ak nemáš prístup, ozvi sa mu.</p>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* =====================================================================
+   NASTAVENIE — sem vlož údaje zo svojho Supabase projektu
+   (Project Settings → API: „Project URL" a „anon public" kľúč)
+===================================================================== */
+const SUPABASE_URL = 'https://qohoarimzraarmolxvyq.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_GruQ_F6DbtJ8eEuQVrJeUA_EfItnu5Y';
+const BUCKET = 'photos';
+/* ===================================================================== */
+
+const el = id => document.getElementById(id);
+const toastEl = el('toast');
+let toastT = null;
+function toast(msg, ms = 3500){
+  toastEl.textContent = msg; toastEl.classList.add('show');
+  clearTimeout(toastT); toastT = setTimeout(() => toastEl.classList.remove('show'), ms);
+}
+function esc(s){ const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+function fmtDate(ts){ try{ return new Date(ts).toLocaleDateString('sk-SK'); }catch{ return ''; } }
+function plural(n){ return n === 1 ? '1 nápad' : (n >= 2 && n <= 4 ? n + ' nápady' : n + ' nápadov'); }
+
+/* farebný avatar z mena */
+const AV_COLORS = ['#C2402E','#4E7D57','#2E6FA3','#8A5FB0','#B07D2E','#3E8B84'];
+function avatarHtml(name){
+  const n = name || 'Niekto';
+  let h = 0; for(const ch of n) h = (h*31 + ch.codePointAt(0)) >>> 0;
+  const c = AV_COLORS[h % AV_COLORS.length];
+  const init = [...n][0].toUpperCase();
+  return `<span class="avatar" style="background:${c}">${esc(init)}</span>`;
+}
+
+/* ---------- mapa ---------- */
+const map = L.map('mapEl', {
+  zoomControl: false,
+  minZoom: 4, maxZoom: 18,
+  maxBounds: [[29, -32], [75, 52]],
+  maxBoundsViscosity: 0.7,
+  worldCopyJump: false
+}).setView([50.5, 14], 5);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">prispievatelia OpenStreetMap</a>'
+}).addTo(map);
+L.control.zoom({ position: 'bottomright', zoomInTitle: 'Priblížiť', zoomOutTitle: 'Oddialiť' }).addTo(map);
+
+function flagIcon(done, selected){
+  const fill = done ? 'var(--done)' : 'var(--accent)';
+  const halo = selected ? `<circle cx="8" cy="16" r="13" fill="none" stroke="${fill}" stroke-width="1.6"/>` : '';
+  return L.divIcon({
+    className: '',
+    html: `<svg class="flag-pin" width="34" height="42" viewBox="0 0 34 42" xmlns="http://www.w3.org/2000/svg">
+      ${halo}
+      <line x1="8" y1="40" x2="8" y2="6" stroke="var(--ink)" stroke-width="2" stroke-linecap="round"/>
+      <path d="M8 6 L30 12 L8 18 Z" fill="${fill}"/>
+      <circle cx="8" cy="40" r="2.4" fill="var(--ink)"/>
+    </svg>`,
+    iconSize: [34, 42],
+    iconAnchor: [8, 40]
+  });
+}
+
+/* ---------- stav ---------- */
+let supa = null, session = null;
+let trips = [];            // riadky z tabuľky trips
+let markers = new Map();   // id -> L.marker
+let selectedId = null;
+let addMode = false;
+let form = null;           // {editId, lat, lng, existing:[path], files:[{file,url}]}
+let rtChannel = null;
+
+function photoUrl(path){
+  return supa.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
+}
+function myName(){
+  const u = session?.user;
+  return u?.user_metadata?.display_name || (u?.email || '').split('@')[0] || 'Niekto';
+}
+function isMine(t){ return session && t.author === session.user.id; }
+
+/* ---------- prihlásenie ---------- */
+function showAuth(msg){
+  el('auth').classList.add('open');
+  el('panel').hidden = true; el('addBtn').hidden = true; el('userChip').hidden = true;
+  if(msg) el('aErr').textContent = msg;
+}
+async function login(){
+  const email = el('aEmail').value.trim(), pass = el('aPass').value;
+  if(!email || !pass){ el('aErr').textContent = 'Vyplň e-mail aj heslo.'; return; }
+  el('aLogin').disabled = true; el('aErr').textContent = '';
+  const { error } = await supa.auth.signInWithPassword({ email, password: pass });
+  el('aLogin').disabled = false;
+  if(error){
+    el('aErr').textContent = /credentials/i.test(error.message)
+      ? 'Nesprávny e-mail alebo heslo.' : 'Prihlásenie sa nepodarilo: ' + error.message;
+  }
+}
+async function afterLogin(){
+  el('auth').classList.remove('open');
+  el('panel').hidden = false; el('addBtn').hidden = false; el('userChip').hidden = false;
+  if(!session.user.user_metadata?.display_name){
+    const n = window.prompt('Ako ťa máme volať na mape?', myName());
+    if(n && n.trim()){
+      await supa.auth.updateUser({ data: { display_name: n.trim() } });
+      const { data } = await supa.auth.getSession(); session = data.session ?? session;
+    }
+  }
+  el('myName').textContent = myName();
+  el('myAvatar').outerHTML = avatarHtml(myName());
+  await loadTrips();
+  startRealtime();
+}
+function startRealtime(){
+  if(rtChannel) supa.removeChannel(rtChannel);
+  rtChannel = supa.channel('mapa')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'trips' }, () => loadTrips())
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'comments' }, () => {
+      if(selectedId && !form) loadComments(selectedId);
+    })
+    .subscribe();
+}
+
+/* ---------- načítanie ---------- */
+async function loadTrips(){
+  const { data, error } = await supa.from('trips').select('*').order('created_at', { ascending: false });
+  if(error){ toast('Výlety sa nepodarilo načítať.'); return; }
+  trips = data || [];
+  renderMarkers(); renderList();
+  if(selectedId && !form){
+    const t = trips.find(x => x.id === selectedId);
+    if(!t) closeDrawer();
+    else{
+      const ta = el('commentText');
+      if(!ta || !ta.value) openDetail(selectedId, { keepView: true });
+    }
+  }
+}
+
+/* ---------- vlajočky ---------- */
+function renderMarkers(){
+  for(const m of markers.values()) m.remove();
+  markers.clear();
+  for(const t of trips){
+    const m = L.marker([t.lat, t.lng], {
+      icon: flagIcon(t.done, t.id === selectedId),
+      title: t.title, riseOnHover: true
+    }).addTo(map);
+    m.on('click', () => openDetail(t.id));
+    markers.set(t.id, m);
+  }
+}
+
+/* ---------- zoznam ---------- */
+function renderList(){
+  el('panelTitle').textContent = 'Nápady — ' + plural(trips.length);
+  const rows = el('rows');
+  if(trips.length === 0){
+    rows.innerHTML = `<div class="empty">Zatiaľ tu nie je žiadny výlet. Klikni na <b>⚑ Pridať výlet</b> a zapichni prvú vlajočku.</div>`;
+    return;
+  }
+  rows.innerHTML = '';
+  for(const t of trips){
+    const b = document.createElement('button');
+    b.className = 'row' + (t.done ? ' done' : '');
+    const ph = (t.images && t.images.length) ? ` · ${t.images.length} 📷` : '';
+    b.innerHTML = `<span class="flag-ico" style="color:${t.done ? 'var(--done)' : 'var(--accent)'}">⚑</span>
+      <span><span class="t">${esc(t.title)}</span><br><span class="m">${esc(t.author_name || 'Niekto')} · ${fmtDate(t.created_at)}${ph}</span></span>`;
+    b.addEventListener('click', () => {
+      map.flyTo([t.lat, t.lng], Math.max(map.getZoom(), 8), { duration: 0.6 });
+      openDetail(t.id);
+    });
+    rows.appendChild(b);
+  }
+}
+el('panelToggle').addEventListener('click', () => {
+  const p = el('panel');
+  p.classList.toggle('collapsed');
+  el('panelToggle').textContent = p.classList.contains('collapsed') ? '▸' : '▾';
+});
+
+/* ---------- šuplík: detail ---------- */
+const drawer = el('drawer');
+function closeDrawer(){
+  drawer.classList.remove('open');
+  selectedId = null;
+  renderMarkers();
+}
+el('drawerClose').addEventListener('click', () => { cleanForm(); form = null; closeDrawer(); });
+
+function openDetail(id, opts = {}){
+  const t = trips.find(x => x.id === id);
+  if(!t) return;
+  selectedId = id;
+  addModeOff();
+  renderMarkers();
+
+  el('drawerTitle').textContent = t.title;
+  const gal = (t.images && t.images.length)
+    ? `<div class="gallery">${t.images.map(p => `<img loading="lazy" src="${esc(photoUrl(p))}" alt="Fotka k výletu">`).join('')}</div>`
+    : '';
+  const manage = isMine(t) ? `
+    <div class="tools">
+      <button class="btn quiet" id="editBtn">✎ Upraviť</button>
+      <button class="btn danger" id="deleteBtn">Vymazať</button>
+    </div>` : '';
+
+  el('drawerBody').innerHTML = `
+    <div class="meta">${avatarHtml(t.author_name)}<span><span class="who">${esc(t.author_name || 'Niekto')}</span><br><span class="when">${fmtDate(t.created_at)}</span></span></div>
+    ${t.descr ? `<p class="desc">${esc(t.descr)}</p>` : ''}
+    ${gal}
+    <label class="donebox"><input type="checkbox" id="doneChk" ${t.done ? 'checked' : ''}> Boli sme tam</label>
+    <h3 class="section-title">Komentáre</h3>
+    <div id="comments"><p class="note">Načítavam…</p></div>
+    <div class="composer">
+      <textarea id="commentText" placeholder="Napíš komentár…"></textarea>
+      <button class="btn" id="commentSend">Poslať</button>
+    </div>
+    ${manage}`;
+
+  el('drawerBody').querySelectorAll('.gallery img').forEach(img =>
+    img.addEventListener('click', () => openLightbox(img.src)));
+  el('doneChk').addEventListener('change', async e => {
+    const v = e.target.checked;
+    const { error } = await supa.from('trips').update({ done: v }).eq('id', t.id);
+    if(error){ e.target.checked = !v; toast('Nepodarilo sa uložiť zmenu.'); }
+  });
+  el('editBtn')?.addEventListener('click', () => openForm({ edit: t }));
+  el('deleteBtn')?.addEventListener('click', () => deleteTrip(t));
+  el('commentSend').addEventListener('click', () => sendComment(t));
+  el('commentText').addEventListener('keydown', e => {
+    if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); sendComment(t); }
+  });
+
+  loadComments(t.id);
+  drawer.classList.add('open');
+}
+
+/* komentáre */
+async function loadComments(tripId){
+  const box = el('comments'); if(!box) return;
+  const { data, error } = await supa.from('comments')
+    .select('*').eq('trip_id', tripId).order('created_at', { ascending: true });
+  const box2 = el('comments'); if(!box2) return;
+  if(error){ box2.innerHTML = `<p class="note">Komentáre sa nepodarilo načítať.</p>`; return; }
+  if(!data.length){ box2.innerHTML = `<p class="note">Zatiaľ bez komentárov.</p>`; return; }
+  box2.innerHTML = data.map(c => `
+    <div class="comment">${avatarHtml(c.author_name)}
+      <div class="bubble"><span class="who">${esc(c.author_name || 'Niekto')}</span><span class="when">${fmtDate(c.created_at)}</span>
+      <p>${esc(c.body)}</p></div>
+    </div>`).join('');
+}
+async function sendComment(t){
+  const ta = el('commentText'); if(!ta) return;
+  const body = ta.value.trim(); if(!body) return;
+  ta.value = '';
+  const { error } = await supa.from('comments').insert({
+    trip_id: t.id, author: session.user.id, author_name: myName(), body
+  });
+  if(error){ ta.value = body; toast('Komentár sa nepodarilo poslať.'); }
+  else loadComments(t.id);
+}
+
+/* mazanie */
+async function deleteTrip(t){
+  if(!confirm(`Naozaj vymazať výlet „${t.title}" aj s komentármi a fotkami?`)) return;
+  try{
+    if(t.images && t.images.length) await supa.storage.from(BUCKET).remove(t.images);
+    const { error } = await supa.from('trips').delete().eq('id', t.id);
+    if(error) throw error;
+    closeDrawer();
+    toast('Výlet je vymazaný.');
+    loadTrips();
+  }catch{ toast('Vymazanie sa nepodarilo.'); }
+}
+
+/* ---------- formulár ---------- */
+function openForm(opts){
+  const t = opts.edit || null;
+  form = {
+    editId: t ? t.id : null,
+    lat: t ? t.lat : opts.lat,
+    lng: t ? t.lng : opts.lng,
+    existing: t ? [...(t.images || [])] : [],
+    files: []
+  };
+  el('drawerTitle').textContent = t ? 'Upraviť výlet' : 'Nový výlet';
+  el('drawerBody').innerHTML = `
+    <label for="fTitle">Názov</label>
+    <input type="text" id="fTitle" maxlength="120" placeholder="napr. Splav Soče, Slovinsko" value="${t ? esc(t.title) : ''}">
+    <label for="fDesc">Popis</label>
+    <textarea id="fDesc" maxlength="4000" placeholder="Prečo tam ísť, čo vidieť, kedy sa oplatí…">${t ? esc(t.descr || '') : ''}</textarea>
+    <label>Fotky</label>
+    <div class="photo-grid" id="phGrid"></div>
+    <input type="file" id="fFiles" accept="image/*" multiple hidden>
+    <div class="form-actions">
+      <button class="btn primary" id="fSave">Uložiť výlet</button>
+      <button class="btn quiet" id="fCancel">Zrušiť</button>
+    </div>
+    <p class="note" id="fStatus"></p>`;
+  paintPhotoGrid();
+  el('fFiles').addEventListener('change', e => {
+    for(const f of e.target.files){
+      if(form.existing.length + form.files.length >= 8){ toast('Maximálne 8 fotiek na výlet.'); break; }
+      form.files.push({ file: f, url: URL.createObjectURL(f) });
+    }
+    e.target.value = '';
+    paintPhotoGrid();
+  });
+  el('fSave').addEventListener('click', saveForm);
+  el('fCancel').addEventListener('click', () => {
+    const eid = form && form.editId;
+    cleanForm(); form = null;
+    if(eid) openDetail(eid); else closeDrawer();
+  });
+  drawer.classList.add('open');
+  el('fTitle').focus();
+}
+function paintPhotoGrid(){
+  const grid = el('phGrid'); if(!grid || !form) return;
+  grid.innerHTML = '';
+  form.existing.forEach((p, i) => {
+    const d = document.createElement('div'); d.className = 'ph';
+    d.innerHTML = `<img src="${esc(photoUrl(p))}" alt=""><button class="rm" aria-label="Odstrániť fotku">✕</button>`;
+    d.querySelector('.rm').addEventListener('click', () => { form.existing.splice(i, 1); paintPhotoGrid(); });
+    grid.appendChild(d);
+  });
+  form.files.forEach((f, i) => {
+    const d = document.createElement('div'); d.className = 'ph';
+    d.innerHTML = `<img src="${f.url}" alt=""><button class="rm" aria-label="Odstrániť fotku">✕</button>`;
+    d.querySelector('.rm').addEventListener('click', () => { URL.revokeObjectURL(f.url); form.files.splice(i, 1); paintPhotoGrid(); });
+    grid.appendChild(d);
+  });
+  const add = document.createElement('button');
+  add.className = 'addph'; add.textContent = '+ pridať';
+  add.addEventListener('click', () => el('fFiles').click());
+  grid.appendChild(add);
+}
+function cleanForm(){ if(form) for(const f of form.files) URL.revokeObjectURL(f.url); }
+
+async function compressImage(file){
+  try{
+    const bmp = await createImageBitmap(file);
+    const max = 1600;
+    const r = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const w = Math.round(bmp.width * r), h = Math.round(bmp.height * r);
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    cv.getContext('2d').drawImage(bmp, 0, 0, w, h);
+    const blob = await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.82));
+    return (blob && blob.size < file.size) ? blob : file;
+  }catch{ return file; }
+}
+
+async function saveForm(){
+  if(!form) return;
+  const title = el('fTitle').value.trim();
+  const descr = el('fDesc').value.trim();
+  if(!title){ toast('Napíš aspoň názov výletu.'); el('fTitle').focus(); return; }
+  const saveBtn = el('fSave'), status = el('fStatus');
+  saveBtn.disabled = true;
+
+  const images = [...form.existing];
+  for(let i = 0; i < form.files.length; i++){
+    status.textContent = `Nahrávam fotku ${i+1} z ${form.files.length}…`;
+    try{
+      const blob = await compressImage(form.files[i].file);
+      const path = `${crypto.randomUUID()}.jpg`;
+      const { error } = await supa.storage.from(BUCKET)
+        .upload(path, blob, { contentType: blob.type || 'image/jpeg' });
+      if(error) throw error;
+      images.push(path);
+    }catch{ toast('Jednu fotku sa nepodarilo nahrať, preskočil som ju.'); }
+  }
+  status.textContent = 'Ukladám…';
+
+  try{
+    if(form.editId){
+      const before = trips.find(x => x.id === form.editId);
+      const removed = (before?.images || []).filter(p => !images.includes(p));
+      const { error } = await supa.from('trips')
+        .update({ title, descr, images }).eq('id', form.editId);
+      if(error) throw error;
+      if(removed.length) supa.storage.from(BUCKET).remove(removed).catch?.(() => {});
+      const fid = form.editId; cleanForm(); form = null;
+      await loadTrips();
+      openDetail(fid);
+    }else{
+      const { error } = await supa.from('trips').insert({
+        title, descr, lat: form.lat, lng: form.lng,
+        author: session.user.id, author_name: myName(), images, done: false
+      });
+      if(error) throw error;
+      cleanForm(); form = null;
+      closeDrawer();
+      toast('Vlajočka je na mape.');
+      loadTrips();
+    }
+  }catch{
+    saveBtn.disabled = false;
+    status.textContent = '';
+    toast('Uloženie sa nepodarilo, skús to znova.');
+  }
+}
+
+/* ---------- režim pridávania ---------- */
+function addModeOn(){ addMode = true; document.body.classList.add('add-mode'); }
+function addModeOff(){ addMode = false; document.body.classList.remove('add-mode'); }
+el('addBtn').addEventListener('click', () => { closeDrawer(); addModeOn(); });
+el('cancelAdd').addEventListener('click', addModeOff);
+map.on('click', e => {
+  if(addMode){
+    addModeOff();
+    openForm({ lat: e.latlng.lat, lng: e.latlng.lng });
+  }else if(drawer.classList.contains('open') && !form){
+    closeDrawer();
+  }
+});
+
+/* ---------- lightbox ---------- */
+const lightbox = el('lightbox');
+function openLightbox(src){ el('lightboxImg').src = src; lightbox.classList.add('open'); }
+lightbox.addEventListener('click', e => { if(e.target !== el('lightboxImg')) lightbox.classList.remove('open'); });
+document.addEventListener('keydown', e => {
+  if(e.key === 'Escape'){
+    if(lightbox.classList.contains('open')) lightbox.classList.remove('open');
+    else if(addMode) addModeOff();
+    else if(drawer.classList.contains('open')){ cleanForm(); form = null; closeDrawer(); }
+  }
+  if(e.key === 'Enter' && el('auth').classList.contains('open')) login();
+});
+
+/* ---------- štart ---------- */
+(async function init(){
+  if(SUPABASE_URL.includes('TVOJ-PROJEKT') || SUPABASE_ANON_KEY.includes('TVOJ-ANON')){
+    showAuth('Appka ešte nie je nastavená — v index.html doplň SUPABASE_URL a SUPABASE_ANON_KEY (viď návod).');
+    el('aLogin').disabled = true;
+    return;
+  }
+  supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  el('aLogin').addEventListener('click', login);
+  el('logoutBtn').addEventListener('click', async () => { await supa.auth.signOut(); location.reload(); });
+
+  const { data } = await supa.auth.getSession();
+  session = data.session;
+  supa.auth.onAuthStateChange((_ev, s) => {
+    const was = !!session; session = s;
+    if(!was && s) afterLogin();
+    if(was && !s) location.reload();
+  });
+  if(session) afterLogin(); else showAuth();
+})();
+</script>
+</body>
+</html>
